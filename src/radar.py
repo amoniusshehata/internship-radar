@@ -43,7 +43,6 @@ ENTRY_LEVEL_PATTERNS = [
     r"\bearly\s+career\b",
 ]
 
-UNSPECIFIED_EXCLUDED_PATTERNS = EXCLUDE_ENTRY_LEVEL_PATTERNS
 
 EXCLUDE_ENTRY_LEVEL_PATTERNS = [
     r"\bsenior\b", r"\bstaff\b", r"\bprincipal\b",
