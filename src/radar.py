@@ -587,10 +587,10 @@ def main():
             "<b>Diagnostics</b>",
             f"Sources: {sum(source_counts.values())}",
             f"Unique: {stats['unique']}",
-            f"Internship: {stats['internship']}",
+            f"Target level: {stats['target_level']}",
             f"AI/Data: {stats['ai_data']}",
             f"Location eligible: {stats['location']}",
-            f"Fully eligible: {stats['eligible']}",
+            f"New eligible: {stats['eligible']}",
             f"Already sent: {stats['already_sent']}",
             f"Already sent eligible: {stats['already_sent_eligible']}",
         ]
