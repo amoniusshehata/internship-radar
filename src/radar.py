@@ -12,29 +12,91 @@ import requests
 STATE_FILE = Path("data/sent_jobs.json")
 TIMEOUT = 25
 
-AI_KEYWORDS = [
-    "machine learning", "machine-learning", "ml", "data science",
-    "data scientist", "data analyst", "artificial intelligence",
-    "ai engineer", "computer vision", "nlp", "natural language processing",
-    "deep learning", "llm", "large language model", "rag",
-    "retrieval augmented generation", "ai research", "research intern",
-    "research engineer", "predictive modeling", "analytics"
+AI_TITLE_PATTERNS = [
+    r"machine\s*learning",
+    r"\bml\b",
+    r"artificial\s*intelligence",
+    r"\bai\b",
+    r"data\s*science",
+    r"data\s*scientist",
+    r"data\s*analyst",
+    r"data\s*engineer",
+    r"ai\s*engineer",
+    r"ml\s*engineer",
+    r"computer\s*vision",
+    r"\bnlp\b",
+    r"natural\s*language",
+    r"deep\s*learning",
+    r"\bllm\b",
+    r"large\s*language\s*model",
+    r"generative\s*ai",
+    r"retrieval\s*augmented",
+    r"\brag\b",
+    r"predictive\s*modeling",
+    r"analytics",
 ]
-INTERNSHIP_KEYWORDS = [
-    "intern", "internship", "trainee", "co-op", "coop",
-    "apprentice", "graduate program", "student"
+
+AI_DESCRIPTION_PATTERNS = [
+    r"machine\s*learning",
+    r"artificial\s*intelligence",
+    r"data\s*science",
+    r"data\s*analyst",
+    r"data\s*engineer",
+    r"computer\s*vision",
+    r"natural\s*language",
+    r"deep\s*learning",
+    r"large\s*language\s*model",
+    r"generative\s*ai",
+    r"retrieval\s*augmented",
+    r"predictive\s*modeling",
 ]
-LOCATION_KEYWORDS = [
-    "egypt", "cairo", "giza", "alexandria", "aswan", "remote",
-    "remotely", "worldwide", "anywhere", "mena", "middle east"
+
+INTERNSHIP_PATTERNS = [
+    r"\bintern\b",
+    r"\binternship\b",
+    r"\btrainee\b",
+    r"\bco[- ]?op\b",
+    r"\bapprentice\b",
+    r"graduate\s+(program|internship)",
+    r"student\s+(intern|program)",
 ]
-EXCLUDE_KEYWORDS = ["senior", "staff", "principal", "director", "vice president", "head of", "manager"]
+
+EGYPT_PATTERNS = [
+    r"\begypt\b",
+    r"\bcairo\b",
+    r"\bgiza\b",
+    r"\balexandria\b",
+    r"\baswan\b",
+    r"\bmansoura\b",
+    r"\btanta\b",
+    r"\bisma(ï|i)lia\b",
+    r"\bport\s+said\b",
+    r"\bsuez\b",
+]
+
+REMOTE_PATTERNS = [
+    r"\bremote\b",
+    r"\bremotely\b",
+    r"\bworldwide\b",
+    r"\banywhere\b",
+    r"\bwork\s+from\s+anywhere\b",
+    r"\bglobal\b",
+    r"\bmena\b",
+    r"\bmiddle\s+east\b",
+]
+
+EXCLUDE_KEYWORDS = [
+    "senior", "staff", "principal", "director", "vice president",
+    "head of", "manager"
+]
 HEADERS = {"User-Agent": "internship-radar/1.0"}
+
 
 def get_json(url, params=None):
     r = requests.get(url, params=params, headers=HEADERS, timeout=TIMEOUT)
     r.raise_for_status()
     return r.json()
+
 
 def clean_text(value):
     if not value:
@@ -42,11 +104,13 @@ def clean_text(value):
     value = re.sub(r"<[^>]+>", " ", str(value))
     return re.sub(r"\s+", " ", html.unescape(value)).strip()
 
+
 def canonical_url(url):
     if not url:
         return ""
     p = urlsplit(url.strip())
     return urlunsplit((p.scheme.lower(), p.netloc.lower(), p.path.rstrip("/"), "", ""))
+
 
 def parse_date(value):
     if not value:
@@ -56,6 +120,11 @@ def parse_date(value):
         return (dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)).astimezone(timezone.utc)
     except ValueError:
         return None
+
+
+def matches_any(text, patterns):
+    return any(re.search(pattern, text, re.IGNORECASE) for pattern in patterns)
+
 
 def normalize_job(title, company, location, url, description="", posted_at=None, source=""):
     url = canonical_url(url)
@@ -70,20 +139,29 @@ def normalize_job(title, company, location, url, description="", posted_at=None,
         "source": source,
     }
 
+
 def fetch_jobicy():
     jobs = []
     try:
-        data = get_json("https://jobicy.com/api/v2/remote-jobs", {"count": 200, "industry": "data-science"})
+        data = get_json(
+            "https://jobicy.com/api/v2/remote-jobs",
+            {"count": 200, "industry": "data-science"},
+        )
         for x in data.get("jobs", []):
             types = ", ".join(x.get("jobType", []))
             jobs.append(normalize_job(
-                x.get("jobTitle"), x.get("companyName"), x.get("jobGeo") or "Remote",
-                x.get("url"), f"{x.get('jobExcerpt', '')} {x.get('jobDescription', '')} {types}",
-                parse_date(x.get("pubDate")), "Jobicy"
+                x.get("jobTitle"),
+                x.get("companyName"),
+                x.get("jobGeo") or "Remote",
+                x.get("url"),
+                f"{x.get('jobExcerpt', '')} {x.get('jobDescription', '')} {types}",
+                parse_date(x.get("pubDate")),
+                "Jobicy",
             ))
     except requests.RequestException as e:
         print(f"[Jobicy] skipped: {e}")
     return jobs
+
 
 def fetch_remotive():
     jobs = []
@@ -91,37 +169,94 @@ def fetch_remotive():
         data = get_json("https://remotive.com/api/remote-jobs", {"limit": 100})
         for x in data.get("jobs", []):
             jobs.append(normalize_job(
-                x.get("title"), x.get("company_name"),
+                x.get("title"),
+                x.get("company_name"),
                 x.get("candidate_required_location") or "Remote",
-                x.get("url"), f"{x.get('description', '')} {x.get('job_type', '')}",
-                parse_date(x.get("publication_date")), "Remotive"
+                x.get("url"),
+                f"{x.get('description', '')} {x.get('job_type', '')}",
+                parse_date(x.get("publication_date")),
+                "Remotive",
             ))
     except requests.RequestException as e:
         print(f"[Remotive] skipped: {e}")
     return jobs
 
+
+def is_ai_role(job):
+    title = job["title"].lower()
+    description = job["description"].lower()
+
+    # Strong title match is preferred. This prevents generic roles such as
+    # "Analyst" or "Engineer" from passing just because the description
+    # mentions an unrelated AI tool.
+    if matches_any(title, AI_TITLE_PATTERNS):
+        return True
+
+    # Research internships can be generic in title, so require an explicit
+    # AI/data/ML signal in the description.
+    if re.search(r"\bresearch\s+(intern|internship)\b", title, re.IGNORECASE):
+        return matches_any(description, AI_DESCRIPTION_PATTERNS)
+
+    return False
+
+
+def is_internship(job):
+    title = job["title"].lower()
+    return matches_any(title, INTERNSHIP_PATTERNS)
+
+
+def is_location_eligible(job):
+    """
+    User location rule:
+    - Inside Egypt: accept physical Egypt roles and remote roles.
+    - Outside Egypt: accept only roles explicitly described as remote/global.
+    """
+    location = job["location"].lower()
+    description = job["description"].lower()
+
+    is_egypt = matches_any(location, EGYPT_PATTERNS)
+    is_remote = matches_any(location, REMOTE_PATTERNS) or matches_any(description, REMOTE_PATTERNS)
+
+    if is_egypt:
+        return True
+    return is_remote
+
+
 def score_job(job):
-    text = f"{job['title']} {job['location']} {job['description']}".lower()
-    if any(x in job["title"].lower() for x in EXCLUDE_KEYWORDS):
+    title = job["title"].lower()
+    location = job["location"].lower()
+    text = f"{title} {location} {job['description']}".lower()
+
+    if any(x in title for x in EXCLUDE_KEYWORDS):
         return 0
-    score = sum(k in text for k in AI_KEYWORDS) * 2
-    score += sum(k in job["title"].lower() for k in INTERNSHIP_KEYWORDS) * 4
-    score += sum(k in job["location"].lower() for k in LOCATION_KEYWORDS) * 3
-    if "internship" in text:
+
+    score = sum(bool(re.search(pattern, title, re.IGNORECASE)) for pattern in AI_TITLE_PATTERNS) * 3
+    score += sum(bool(re.search(pattern, title, re.IGNORECASE)) for pattern in INTERNSHIP_PATTERNS) * 4
+
+    if matches_any(location, EGYPT_PATTERNS):
+        score += 4
+    if matches_any(location, REMOTE_PATTERNS) or matches_any(text, REMOTE_PATTERNS):
         score += 3
+
     posted = parse_date(job["posted_at"])
     if posted and datetime.now(timezone.utc) - posted <= timedelta(days=3):
         score += 2
+
     return score
+
 
 def is_match(job):
     title = job["title"].lower()
-    location = job["location"].lower()
-    text = f"{title} {job['description'].lower()}"
-    has_ai = any(k in text for k in AI_KEYWORDS)
-    has_internship = any(k in title for k in INTERNSHIP_KEYWORDS) or "internship" in text
-    has_location = any(k in location for k in LOCATION_KEYWORDS) or "remote" in text
-    return has_ai and has_internship and has_location
+
+    if any(x in title for x in EXCLUDE_KEYWORDS):
+        return False
+
+    return (
+        is_ai_role(job)
+        and is_internship(job)
+        and is_location_eligible(job)
+    )
+
 
 def load_state():
     try:
@@ -129,9 +264,11 @@ def load_state():
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         return {}
 
+
 def save_state(state):
     STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
     STATE_FILE.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
+
 
 def send_telegram(message):
     r = requests.post(
@@ -146,6 +283,7 @@ def send_telegram(message):
     )
     r.raise_for_status()
 
+
 def main():
     jobs = fetch_jobicy() + fetch_remotive()
     print(f"Collected {len(jobs)} jobs.")
@@ -153,17 +291,21 @@ def main():
     state = load_state()
     unique = {j["url"]: j for j in jobs if j["url"]}
     matches = [j for j in unique.values() if j["url"] not in state and is_match(j)]
+
     for j in matches:
         j["score"] = score_job(j)
+
     matches.sort(key=lambda j: (j["score"], j["posted_at"]), reverse=True)
 
     selected = matches[:int(os.getenv("MAX_JOBS_PER_REPORT", "10"))]
+
     if selected:
         lines = [
             "<b>Daily Internship Radar</b>",
             f"Found {len(selected)} new matching opportunities.",
-            ""
+            "",
         ]
+
         for i, j in enumerate(selected, 1):
             lines.extend([
                 f"<b>{i}. {html.escape(j['title'])}</b>",
@@ -171,12 +313,18 @@ def main():
                 f"Location: {html.escape(j['location'])}",
                 f"Source: {html.escape(j['source'])}",
                 f"<a href=\"{html.escape(j['url'], quote=True)}\">Open listing</a>",
-                ""
+                "",
             ])
+
         send_telegram("\n".join(lines))
+
         now = datetime.now(timezone.utc).isoformat()
         for j in selected:
-            state[j["url"]] = {"first_sent_at": now, "title": j["title"], "company": j["company"]}
+            state[j["url"]] = {
+                "first_sent_at": now,
+                "title": j["title"],
+                "company": j["company"],
+            }
     else:
         send_telegram("<b>Daily Internship Radar</b>\nNo new matching internships were found today.")
 
@@ -186,6 +334,7 @@ def main():
         if (parse_date(x.get("first_sent_at")) or datetime.min.replace(tzinfo=timezone.utc)) >= cutoff
     }
     save_state(state)
+
 
 if __name__ == "__main__":
     main()
