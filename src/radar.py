@@ -60,12 +60,30 @@ REVIEW_EXCLUDE_PATTERNS = [
     r"\bexperienced\s+professional\b",
     r"\bmid[- ]?level\b",
     r"\bexperienced\s+engineer\b",
+    r"\bexperienced\s+(?:data|machine\s+learning|ai|software)\s+(?:scientist|analyst|engineer)\b",
+    r"\b(?:seasoned|highly\s+experienced)\b",
 ]
 
 EXPERIENCE_YEARS_PATTERN = re.compile(
-    r"\b(?:at\s+least\s+)?([3-9]|[1-9][0-9])\+?\s+years?\b",
+    r"\b(?:at\s+least|minimum(?:\s+of)?|minimum|required(?:\s+to\s+have)?|requires?)\s+([3-9]|[1-9][0-9])\+?\s+years?\b"
+    r"|\b([3-9]|[1-9][0-9])\+?\s+years?\s+(?:of\s+)?(?:relevant\s+|professional\s+)?experience\b",
     re.IGNORECASE,
 )
+
+TIER2_EXPERIENCE_PATTERNS = [
+    r"\b0\s*[-–]\s*1\s+years?\b",
+    r"\b0\s*[-–]\s*2\s+years?\b",
+    r"\b1\s*[-–]\s*2\s+years?\b",
+    r"\bless\s+than\s+2\s+years?\b",
+    r"\bno\s+(?:prior\s+)?experience\b",
+    r"\bno\s+professional\s+experience\b",
+    r"\bfresh\s+graduate\b",
+    r"\brecent\s+graduate\b",
+    r"\bnew\s+graduate\b",
+    r"\bstudents?\s+(?:welcome|encouraged|eligible|may\s+apply)\b",
+    r"\bcurrently\s+(?:enrolled|studying|pursuing)\b",
+    r"\bdegree\s+(?:in\s+progress|pursuing)\b",
+]
 
 EGYPT_PATTERNS = [
     r"\begypt\b", r"\bcairo\b", r"\bgiza\b", r"\balexandria\b",
@@ -375,6 +393,9 @@ def get_target_tier(job):
     if matches_any(text, ENTRY_LEVEL_PATTERNS):
         return 2
 
+    if matches_any(text, TIER2_EXPERIENCE_PATTERNS):
+        return 2
+
     return 3
 
 
@@ -391,13 +412,10 @@ def review_filter_reason(job):
         return "experienced role keyword"
 
     for match in EXPERIENCE_YEARS_PATTERN.finditer(text):
-        years = int(match.group(1))
+        years_text = match.group(1) or match.group(2)
+        years = int(years_text)
         if years >= 3:
             return f"{years}+ years experience"
-
-    # Common wording that indicates a non-entry-level position.
-    if re.search(r"\b(?:minimum|at\s+least|required)\s+(?:of\s+)?[3-9]\s+years?\b", text, re.IGNORECASE):
-        return "3+ years experience"
 
     return ""
 
@@ -448,6 +466,7 @@ def score_job(job):
 
     score += sum(bool(re.search(pattern, title, re.IGNORECASE)) for pattern in AI_TITLE_PATTERNS) * 3
     score += sum(bool(re.search(pattern, title, re.IGNORECASE)) for pattern in INTERNSHIP_PATTERNS) * 4
+    score += sum(bool(re.search(pattern, title + " " + job["description"], re.IGNORECASE)) for pattern in TIER2_EXPERIENCE_PATTERNS) * 2
 
     if matches_any(location, EGYPT_PATTERNS):
         score += 4
