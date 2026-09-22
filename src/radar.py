@@ -319,8 +319,10 @@ def main():
     }
 
     jobs = []
+    source_counts = {}
     for source_name, fetcher in sources.items():
         source_jobs = fetcher()
+        source_counts[source_name] = len(source_jobs)
         print(f"[{source_name}] collected {len(source_jobs)} jobs.")
         jobs.extend(source_jobs)
 
@@ -328,7 +330,63 @@ def main():
 
     state = load_state()
     unique = {j["url"]: j for j in jobs if j["url"]}
-    matches = [j for j in unique.values() if j["url"] not in state and is_match(j)]
+
+    stats = {
+        "unique": len(unique),
+        "internship": 0,
+        "ai_data": 0,
+        "location": 0,
+        "eligible": 0,
+        "already_sent": 0,
+    }
+    rejection_examples = []
+    for job in unique.values():
+        if job["url"] in state:
+            stats["already_sent"] += 1
+            continue
+
+        internship = is_internship(job)
+        ai_data = is_ai_role(job)
+        location = is_location_eligible(job)
+        if internship:
+            stats["internship"] += 1
+        if ai_data:
+            stats["ai_data"] += 1
+        if location:
+            stats["location"] += 1
+
+        if internship and ai_data and location:
+            stats["eligible"] += 1
+        elif len(rejection_examples) < 8:
+            reasons = []
+            if not internship:
+                reasons.append("not internship")
+            if not ai_data:
+                reasons.append("not AI/Data")
+            if not location:
+                reasons.append("location not eligible")
+            rejection_examples.append(
+                f"{job['title']} | {job['location']} | {', '.join(reasons)}"
+            )
+
+    print("Diagnostics:")
+    for name, count in source_counts.items():
+        print(f"  {name}: {count}")
+    print(f"  Unique URLs: {stats['unique']}")
+    print(f"  Internship: {stats['internship']}")
+    print(f"  AI/Data: {stats['ai_data']}")
+    print(f"  Location eligible: {stats['location']}")
+    print(f"  Fully eligible: {stats['eligible']}")
+    print(f"  Already sent: {stats['already_sent']}")
+    if rejection_examples:
+        print("Rejection examples:")
+        for example in rejection_examples:
+            print(f"  - {example}")
+
+    matches = [
+        j for j in unique.values()
+        if j["url"] not in state and is_match(j)
+    ]
 
     for j in matches:
         j["score"] = score_job(j)
