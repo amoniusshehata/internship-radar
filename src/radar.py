@@ -399,6 +399,14 @@ def main():
             "<b>Daily Internship Radar</b>",
             f"Found {len(selected)} new matching opportunities.",
             "",
+            "<b>Diagnostics</b>",
+            f"Sources: {sum(source_counts.values())}",
+            f"Unique: {stats['unique']}",
+            f"Internship: {stats['internship']}",
+            f"AI/Data: {stats['ai_data']}",
+            f"Location eligible: {stats['location']}",
+            f"Fully eligible: {stats['eligible']}",
+            "",
         ]
 
         for i, j in enumerate(selected, 1):
@@ -421,7 +429,24 @@ def main():
                 "company": j["company"],
             }
     else:
-        send_telegram("<b>Daily Internship Radar</b>\nNo new matching internships were found today.")
+        lines = [
+            "<b>Daily Internship Radar</b>",
+            "No new matching internships were found today.",
+            "",
+            "<b>Diagnostics</b>",
+            f"Sources: {sum(source_counts.values())}",
+            f"Unique: {stats['unique']}",
+            f"Internship: {stats['internship']}",
+            f"AI/Data: {stats['ai_data']}",
+            f"Location eligible: {stats['location']}",
+            f"Fully eligible: {stats['eligible']}",
+            f"Already sent: {stats['already_sent']}",
+        ]
+        if rejection_examples:
+            lines.extend(["", "<b>Examples of rejected jobs</b>"])
+            for example in rejection_examples[:5]:
+                lines.append(html.escape(example))
+        send_telegram("\n".join(lines))
 
     cutoff = datetime.now(timezone.utc) - timedelta(days=60)
     state = {
