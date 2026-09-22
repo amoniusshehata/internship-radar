@@ -259,8 +259,13 @@ def is_internship(job):
     if matches_any(title, INTERNSHIP_PATTERNS):
         return True
 
+    # Junior / entry-level is an accepted target level for this radar.
+    # It still must be an AI/Data role through is_match().
     if matches_any(title, ENTRY_LEVEL_PATTERNS):
         return not matches_any(title, EXCLUDE_ENTRY_LEVEL_PATTERNS)
+
+    if matches_any(text, [r"junior", r"entry[- ]?level", r"early\s+career"]):
+        return True
 
     if matches_any(title, [r"research\s+(assistant|student)"]):
         return matches_any(text, AI_DESCRIPTION_PATTERNS)
