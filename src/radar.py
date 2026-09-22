@@ -33,7 +33,20 @@ AI_DESCRIPTION_PATTERNS = [
 INTERNSHIP_PATTERNS = [
     r"\bintern\b", r"\binternship\b", r"\btrainee\b", r"\bco[- ]?op\b",
     r"\bapprentice\b", r"graduate\s+(program|internship)",
-    r"student\s+(intern|program)",
+    r"student\s+(intern|program)", r"research\s+(assistant|student)",
+]
+
+ENTRY_LEVEL_PATTERNS = [
+    r"\bentry[- ]?level\b",
+    r"\bjunior\b",
+    r"\bgraduate\b",
+    r"\bearly\s+career\b",
+]
+
+EXCLUDE_ENTRY_LEVEL_PATTERNS = [
+    r"\bsenior\b", r"\bstaff\b", r"\bprincipal\b",
+    r"\bmanager\b", r"\bdirector\b", r"\blead\b",
+    r"\bhead\s+of\b", r"\bvice\s+president\b", r"\bvp\b",
 ]
 
 EGYPT_PATTERNS = [
@@ -239,7 +252,20 @@ def is_ai_role(job):
 
 
 def is_internship(job):
-    return matches_any(job["title"].lower(), INTERNSHIP_PATTERNS)
+    title = job["title"].lower()
+    description = job["description"].lower()
+    text = f"{title} {description}"
+
+    if matches_any(title, INTERNSHIP_PATTERNS):
+        return True
+
+    if matches_any(title, ENTRY_LEVEL_PATTERNS):
+        return not matches_any(title, EXCLUDE_ENTRY_LEVEL_PATTERNS)
+
+    if matches_any(title, [r"research\s+(assistant|student)"]):
+        return matches_any(text, AI_DESCRIPTION_PATTERNS)
+
+    return False
 
 
 def is_location_eligible(job):
