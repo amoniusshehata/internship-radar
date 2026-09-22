@@ -43,12 +43,29 @@ ENTRY_LEVEL_PATTERNS = [
     r"\bearly\s+career\b",
 ]
 
-
 EXCLUDE_ENTRY_LEVEL_PATTERNS = [
     r"\bsenior\b", r"\bstaff\b", r"\bprincipal\b",
     r"\bmanager\b", r"\bdirector\b", r"\blead\b",
     r"\bhead\s+of\b", r"\bvice\s+president\b", r"\bvp\b",
 ]
+
+# Tier 3 is not treated as junior automatically.
+# These patterns are used to remove clearly experienced roles from the Review section.
+REVIEW_EXCLUDE_PATTERNS = [
+    r"\barchitect\b",
+    r"\bsolution[s]?\s+architect\b",
+    r"\btechnical\s+lead\b",
+    r"\bteam\s+lead\b",
+    r"\bproject\s+lead\b",
+    r"\bexperienced\s+professional\b",
+    r"\bmid[- ]?level\b",
+    r"\bexperienced\s+engineer\b",
+]
+
+EXPERIENCE_YEARS_PATTERN = re.compile(
+    r"\b(?:at\s+least\s+)?([3-9]|[1-9][0-9])\+?\s+years?\b",
+    re.IGNORECASE,
+)
 
 EGYPT_PATTERNS = [
     r"\begypt\b", r"\bcairo\b", r"\bgiza\b", r"\balexandria\b",
@@ -358,12 +375,39 @@ def get_target_tier(job):
     if matches_any(text, ENTRY_LEVEL_PATTERNS):
         return 2
 
-    # AI/Data roles without an explicit seniority level are kept for review.
     return 3
 
 
+def review_filter_reason(job):
+    """
+    Additional filter for Tier 3.
+    Returns a reason when the role is too experienced for the Review section.
+    """
+    title = job["title"].lower()
+    description = job["description"].lower()
+    text = f"{title} {description}"
+
+    if matches_any(text, REVIEW_EXCLUDE_PATTERNS):
+        return "experienced role keyword"
+
+    for match in EXPERIENCE_YEARS_PATTERN.finditer(text):
+        years = int(match.group(1))
+        if years >= 3:
+            return f"{years}+ years experience"
+
+    # Common wording that indicates a non-entry-level position.
+    if re.search(r"\b(?:minimum|at\s+least|required)\s+(?:of\s+)?[3-9]\s+years?\b", text, re.IGNORECASE):
+        return "3+ years experience"
+
+    return ""
+
+
+def is_review_eligible(job):
+    return get_target_tier(job) == 3 and not review_filter_reason(job)
+
+
 def is_internship(job):
-    return get_target_tier(job) in (1, 2, 3)
+    return get_target_tier(job) in (1, 2) or is_review_eligible(job)
 
 
 def is_location_eligible(job):
@@ -376,26 +420,33 @@ def is_location_eligible(job):
     is_uae = matches_any(text, UAE_PATTERNS)
     is_remote = matches_any(text, REMOTE_PATTERNS)
 
-    # Physical roles are allowed in Egypt, Saudi Arabia, and the UAE.
-    # Roles explicitly restricted to local nationals are excluded.
     if matches_any(text, NATIONALITY_RESTRICTION_PATTERNS):
         return False
 
     if is_egypt or is_saudi or is_uae:
         return True
 
-    # Outside the target countries, only remote roles are accepted.
     return is_remote
 
 
 def score_job(job):
     title = job["title"].lower()
     location = job["location"].lower()
+    tier = get_target_tier(job)
 
     if any(x in title for x in EXCLUDE_KEYWORDS):
         return 0
 
-    score = sum(bool(re.search(pattern, title, re.IGNORECASE)) for pattern in AI_TITLE_PATTERNS) * 3
+    score = 0
+
+    if tier == 1:
+        score += 30
+    elif tier == 2:
+        score += 20
+    elif is_review_eligible(job):
+        score += 10
+
+    score += sum(bool(re.search(pattern, title, re.IGNORECASE)) for pattern in AI_TITLE_PATTERNS) * 3
     score += sum(bool(re.search(pattern, title, re.IGNORECASE)) for pattern in INTERNSHIP_PATTERNS) * 4
 
     if matches_any(location, EGYPT_PATTERNS):
@@ -411,11 +462,15 @@ def score_job(job):
 
 
 def is_match(job):
-    title = job["title"].lower()
-    if any(x in title for x in EXCLUDE_KEYWORDS):
+    tier = get_target_tier(job)
+
+    if tier == 0:
         return False
 
-    return is_ai_role(job) and is_internship(job) and is_location_eligible(job)
+    if tier == 3 and not is_review_eligible(job):
+        return False
+
+    return is_ai_role(job) and is_location_eligible(job)
 
 
 def load_state():
@@ -471,6 +526,8 @@ def main():
         "tier1": 0,
         "tier2": 0,
         "tier3": 0,
+        "tier3_review_eligible": 0,
+        "tier3_review_excluded": 0,
         "ai_data": 0,
         "location": 0,
         "excluded_seniority": 0,
@@ -487,6 +544,7 @@ def main():
         ai_data = is_ai_role(job)
         location = is_location_eligible(job)
         excluded = any(x in title for x in EXCLUDE_KEYWORDS)
+        review_reason = review_filter_reason(job)
 
         if tier == 1:
             stats["tier1"] += 1
@@ -494,6 +552,11 @@ def main():
             stats["tier2"] += 1
         elif tier == 3:
             stats["tier3"] += 1
+            if is_review_eligible(job):
+                stats["tier3_review_eligible"] += 1
+            else:
+                stats["tier3_review_excluded"] += 1
+
         if ai_data:
             stats["ai_data"] += 1
         if location:
@@ -511,10 +574,10 @@ def main():
             stats["eligible"] += 1
         elif len(rejection_examples) < 8:
             reasons = []
-            if excluded:
+            if excluded or tier == 0:
                 reasons.append("seniority excluded")
-            elif tier == 0:
-                reasons.append("seniority excluded")
+            if tier == 3 and review_reason:
+                reasons.append(review_reason)
             if not ai_data:
                 reasons.append("not AI/Data")
             if not location:
@@ -532,6 +595,8 @@ def main():
     print(f"  Tier 1 - Internship: {stats['tier1']}")
     print(f"  Tier 2 - Junior/Graduate: {stats['tier2']}")
     print(f"  Tier 3 - Seniority not specified: {stats['tier3']}")
+    print(f"  Tier 3 - Review eligible: {stats['tier3_review_eligible']}")
+    print(f"  Tier 3 - Review excluded: {stats['tier3_review_excluded']}")
     print(f"  AI/Data: {stats['ai_data']}")
     print(f"  Location eligible: {stats['location']}")
     print(f"  Seniority excluded: {stats['excluded_seniority']}")
@@ -551,36 +616,74 @@ def main():
     for j in matches:
         j["score"] = score_job(j)
 
-    matches.sort(key=lambda j: (j["score"], j["posted_at"]), reverse=True)
-    selected = matches[:int(os.getenv("MAX_JOBS_PER_REPORT", "10"))]
+    tier1 = [j for j in matches if get_target_tier(j) == 1]
+    tier2 = [j for j in matches if get_target_tier(j) == 2]
+    tier3 = [j for j in matches if get_target_tier(j) == 3]
+
+    for group in (tier1, tier2, tier3):
+        group.sort(key=lambda j: (j["score"], j["posted_at"]), reverse=True)
+
+    max_jobs = int(os.getenv("MAX_JOBS_PER_REPORT", "10"))
+
+    # Keep the Telegram report explicitly separated into the requested sections.
+    # Fill Tier 1 first, then Tier 2, then use Tier 3 only as Review.
+    selected = []
+    selected.extend(tier1[:max_jobs])
+
+    remaining = max_jobs - len(selected)
+    if remaining > 0:
+        selected.extend(tier2[:remaining])
+
+    remaining = max_jobs - len(selected)
+    if remaining > 0:
+        selected.extend(tier3[:remaining])
 
     if selected:
         lines = [
             "<b>Daily Internship Radar</b>",
             f"Found {len(selected)} new matching opportunities.",
             "",
+            "<b>Section 1 - Internship</b>",
+        ]
+
+        section_number = 0
+        section_groups = [
+            ("Tier 1", [j for j in selected if get_target_tier(j) == 1]),
+            ("Tier 2", [j for j in selected if get_target_tier(j) == 2]),
+            ("Tier 3", [j for j in selected if get_target_tier(j) == 3]),
+        ]
+
+        for index, (tier_name, group) in enumerate(section_groups):
+            if index == 1:
+                lines.extend(["", "<b>Section 2 - Junior / Graduate</b>"])
+            elif index == 2:
+                lines.extend(["", "<b>Section 3 - Review</b>"])
+
+            for j in group:
+                section_number += 1
+                lines.extend([
+                    f"<b>{section_number}. {html.escape(j['title'])}</b>",
+                    f"Company: {html.escape(j['company'])}",
+                    f"Location: {html.escape(j['location'])}",
+                    f"Source: {html.escape(j['source'])}",
+                    f"<a href=\"{html.escape(j['url'], quote=True)}\">Open listing</a>",
+                    "",
+                ])
+
+        lines.extend([
             "<b>Diagnostics</b>",
             f"Sources: {sum(source_counts.values())}",
             f"Unique: {stats['unique']}",
             f"Tier 1 - Internship: {stats['tier1']}",
             f"Tier 2 - Junior/Graduate: {stats['tier2']}",
             f"Tier 3 - Seniority not specified: {stats['tier3']}",
+            f"Tier 3 - Review eligible: {stats['tier3_review_eligible']}",
+            f"Tier 3 - Review excluded: {stats['tier3_review_excluded']}",
             f"AI/Data: {stats['ai_data']}",
             f"Location eligible: {stats['location']}",
             f"Seniority excluded: {stats['excluded_seniority']}",
             f"New eligible: {stats['eligible']}",
-            "",
-        ]
-
-        for i, j in enumerate(selected, 1):
-            lines.extend([
-                f"<b>{i}. {html.escape(j['title'])}</b>",
-                f"Company: {html.escape(j['company'])}",
-                f"Location: {html.escape(j['location'])}",
-                f"Source: {html.escape(j['source'])}",
-                f"<a href=\"{html.escape(j['url'], quote=True)}\">Open listing</a>",
-                "",
-            ])
+        ])
 
         send_telegram("\n".join(lines))
 
@@ -602,6 +705,8 @@ def main():
             f"Tier 1 - Internship: {stats['tier1']}",
             f"Tier 2 - Junior/Graduate: {stats['tier2']}",
             f"Tier 3 - Seniority not specified: {stats['tier3']}",
+            f"Tier 3 - Review eligible: {stats['tier3_review_eligible']}",
+            f"Tier 3 - Review excluded: {stats['tier3_review_excluded']}",
             f"AI/Data: {stats['ai_data']}",
             f"Location eligible: {stats['location']}",
             f"New eligible: {stats['eligible']}",
