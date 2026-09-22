@@ -55,6 +55,25 @@ EGYPT_PATTERNS = [
     r"\bport\s+said\b", r"\bsuez\b",
 ]
 
+SAUDI_PATTERNS = [
+    r"\bsaudi\s+arabia\b", r"\bksa\b", r"\briyadh\b",
+    r"\bjeddah\b", r"\bdammam\b", r"\bdhahran\b", r"\bkhobar\b",
+]
+
+UAE_PATTERNS = [
+    r"\buae\b", r"\bunited\s+arab\s+emirates\b", r"\bdubai\b",
+    r"\babu\s+dhabi\b", r"\bsharjah\b", r"\bajman\b",
+]
+
+NATIONALITY_RESTRICTION_PATTERNS = [
+    r"\bsaudi\s+nationals?\s+only\b",
+    r"\bonly\s+saudi\s+nationals?\b",
+    r"\bksa\s+nationals?\s+only\b",
+    r"\bemirati\s+nationals?\s+only\b",
+    r"\buae\s+nationals?\s+only\b",
+    r"\b(u|united\s+arab\s+emirates)\s+nationals?\s+only\b",
+]
+
 REMOTE_PATTERNS = [
     r"\bremote\b", r"\bremotely\b", r"\bworldwide\b", r"\banywhere\b",
     r"\bwork\s+from\s+anywhere\b", r"\bglobal\b", r"\bmena\b",
@@ -193,6 +212,78 @@ class WuzzufJobParser(HTMLParser):
             self.current_text = []
 
 
+def fetch_bayt():
+    jobs = []
+    countries = {
+        "Egypt": "https://www.bayt.com/en/egypt/jobs/",
+        "Saudi Arabia": "https://www.bayt.com/en/saudi-arabia/jobs/",
+        "UAE": "https://www.bayt.com/en/uae/jobs/",
+    }
+    queries = [
+        "ai-internship-jobs/",
+        "machine-learning-internship-jobs/",
+        "data-science-internships-jobs/",
+        "ai-engineer-internship-jobs/",
+    ]
+
+    class BaytJobParser(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.jobs = []
+            self.current_href = None
+            self.current_text = []
+
+        def handle_starttag(self, tag, attrs):
+            attrs = dict(attrs)
+            href = attrs.get("href", "")
+            if tag == "a" and "/jobs/" in href and href.rstrip("/").split("/")[-1] and re.search(r"-\d{7,}$", href.rstrip("/")):
+                self.current_href = href
+                self.current_text = []
+
+        def handle_data(self, data):
+            if self.current_href:
+                self.current_text.append(data)
+
+        def handle_endtag(self, tag):
+            if tag == "a" and self.current_href:
+                title = clean_text(" ".join(self.current_text))
+                if title and len(title) <= 180:
+                    self.jobs.append((title, self.current_href))
+                self.current_href = None
+                self.current_text = []
+
+    try:
+        for country, base_url in countries.items():
+            seen_urls = set()
+            for query in queries:
+                response = requests.get(
+                    urljoin(base_url, query),
+                    headers=HEADERS,
+                    timeout=TIMEOUT,
+                )
+                response.raise_for_status()
+                parser = BaytJobParser()
+                parser.feed(response.text)
+
+                for title, href in parser.jobs:
+                    url = urljoin("https://www.bayt.com", href)
+                    if url in seen_urls:
+                        continue
+                    seen_urls.add(url)
+                    jobs.append(normalize_job(
+                        title=title,
+                        company="Bayt listing",
+                        location=country,
+                        url=url,
+                        description="",
+                        source="Bayt",
+                    ))
+    except requests.RequestException as e:
+        print(f"[Bayt] skipped: {e}")
+
+    return jobs
+
+
 def fetch_wuzzuf():
     jobs = []
     queries = [
@@ -277,12 +368,22 @@ def is_internship(job):
 def is_location_eligible(job):
     location = job["location"].lower()
     description = job["description"].lower()
+    text = f"{location} {description}"
 
-    is_egypt = matches_any(location, EGYPT_PATTERNS)
-    is_remote = matches_any(location, REMOTE_PATTERNS) or matches_any(description, REMOTE_PATTERNS)
+    is_egypt = matches_any(text, EGYPT_PATTERNS)
+    is_saudi = matches_any(text, SAUDI_PATTERNS)
+    is_uae = matches_any(text, UAE_PATTERNS)
+    is_remote = matches_any(text, REMOTE_PATTERNS)
 
-    if is_egypt:
+    # Physical roles are allowed in Egypt, Saudi Arabia, and the UAE.
+    # Roles explicitly restricted to local nationals are excluded.
+    if matches_any(text, NATIONALITY_RESTRICTION_PATTERNS):
+        return False
+
+    if is_egypt or is_saudi or is_uae:
         return True
+
+    # Outside the target countries, only remote roles are accepted.
     return is_remote
 
 
@@ -348,6 +449,7 @@ def main():
         "Remotive": fetch_remotive,
         "Remote OK": fetch_remote_ok,
         "Wuzzuf": fetch_wuzzuf,
+        "Bayt": fetch_bayt,
     }
 
     jobs = []
@@ -365,38 +467,52 @@ def main():
 
     stats = {
         "unique": len(unique),
-        "internship": 0,
+        "target_level": 0,
         "ai_data": 0,
         "location": 0,
+        "excluded_seniority": 0,
         "eligible": 0,
         "already_sent": 0,
+        "already_sent_eligible": 0,
     }
     rejection_examples = []
-    for job in unique.values():
-        if job["url"] in state:
-            stats["already_sent"] += 1
-            continue
 
+    for job in unique.values():
+        title = job["title"].lower()
         internship = is_internship(job)
         ai_data = is_ai_role(job)
         location = is_location_eligible(job)
+        excluded = any(x in title for x in EXCLUDE_KEYWORDS)
+
         if internship:
-            stats["internship"] += 1
+            stats["target_level"] += 1
         if ai_data:
             stats["ai_data"] += 1
         if location:
             stats["location"] += 1
+        if excluded:
+            stats["excluded_seniority"] += 1
 
-        if internship and ai_data and location:
+        if job["url"] in state:
+            stats["already_sent"] += 1
+            if is_match(job):
+                stats["already_sent_eligible"] += 1
+            continue
+
+        if is_match(job):
             stats["eligible"] += 1
         elif len(rejection_examples) < 8:
             reasons = []
-            if not internship:
-                reasons.append("not internship")
+            if excluded:
+                reasons.append("seniority excluded")
+            elif not internship:
+                reasons.append("not internship/junior")
             if not ai_data:
                 reasons.append("not AI/Data")
             if not location:
                 reasons.append("location not eligible")
+            if matches_any(f"{job['location']} {job['description']}", NATIONALITY_RESTRICTION_PATTERNS):
+                reasons.append("nationality restricted")
             rejection_examples.append(
                 f"{job['title']} | {job['location']} | {', '.join(reasons)}"
             )
@@ -405,11 +521,13 @@ def main():
     for name, count in source_counts.items():
         print(f"  {name}: {count}")
     print(f"  Unique URLs: {stats['unique']}")
-    print(f"  Internship: {stats['internship']}")
+    print(f"  Target level (Intern/Junior/Entry): {stats['target_level']}")
     print(f"  AI/Data: {stats['ai_data']}")
     print(f"  Location eligible: {stats['location']}")
-    print(f"  Fully eligible: {stats['eligible']}")
+    print(f"  Seniority excluded: {stats['excluded_seniority']}")
+    print(f"  New eligible: {stats['eligible']}")
     print(f"  Already sent: {stats['already_sent']}")
+    print(f"  Already sent eligible: {stats['already_sent_eligible']}")
     if rejection_examples:
         print("Rejection examples:")
         for example in rejection_examples:
@@ -434,10 +552,11 @@ def main():
             "<b>Diagnostics</b>",
             f"Sources: {sum(source_counts.values())}",
             f"Unique: {stats['unique']}",
-            f"Internship: {stats['internship']}",
+            f"Target level: {stats['target_level']}",
             f"AI/Data: {stats['ai_data']}",
             f"Location eligible: {stats['location']}",
-            f"Fully eligible: {stats['eligible']}",
+            f"Seniority excluded: {stats['excluded_seniority']}",
+            f"New eligible: {stats['eligible']}",
             "",
         ]
 
@@ -473,6 +592,7 @@ def main():
             f"Location eligible: {stats['location']}",
             f"Fully eligible: {stats['eligible']}",
             f"Already sent: {stats['already_sent']}",
+            f"Already sent eligible: {stats['already_sent_eligible']}",
         ]
         if rejection_examples:
             lines.extend(["", "<b>Examples of rejected jobs</b>"])
