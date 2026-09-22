@@ -62,7 +62,8 @@ REMOTE_PATTERNS = [
 ]
 
 EXCLUDE_KEYWORDS = [
-    "senior", "staff", "principal", "director", "vice president", "head of", "manager"
+    "senior", "staff", "principal", "director", "vice president",
+    "head of", "manager", "lead", "head"
 ]
 HEADERS = {"User-Agent": "internship-radar/1.0"}
 
