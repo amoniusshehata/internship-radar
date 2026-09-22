@@ -1,1 +1,12 @@
-{}
+{
+  "https://jobicy.com/jobs/151815-analyst": {
+    "first_sent_at": "2026-09-22T15:28:19.140761+00:00",
+    "title": "Analyst",
+    "company": "Affirm"
+  },
+  "https://jobicy.com/jobs/152294-data-engineer-intern": {
+    "first_sent_at": "2026-09-22T15:28:19.140761+00:00",
+    "title": "Data Engineer (Intern)",
+    "company": "Mactores"
+  }
+}
