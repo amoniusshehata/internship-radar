@@ -43,6 +43,8 @@ ENTRY_LEVEL_PATTERNS = [
     r"\bearly\s+career\b",
 ]
 
+UNSPECIFIED_EXCLUDED_PATTERNS = EXCLUDE_ENTRY_LEVEL_PATTERNS
+
 EXCLUDE_ENTRY_LEVEL_PATTERNS = [
     r"\bsenior\b", r"\bstaff\b", r"\bprincipal\b",
     r"\bmanager\b", r"\bdirector\b", r"\blead\b",
@@ -343,26 +345,26 @@ def is_ai_role(job):
     return False
 
 
-def is_internship(job):
+def get_target_tier(job):
     title = job["title"].lower()
     description = job["description"].lower()
     text = f"{title} {description}"
 
+    if matches_any(title, EXCLUDE_ENTRY_LEVEL_PATTERNS):
+        return 0
+
     if matches_any(title, INTERNSHIP_PATTERNS):
-        return True
+        return 1
 
-    # Junior / entry-level is an accepted target level for this radar.
-    # It still must be an AI/Data role through is_match().
-    if matches_any(title, ENTRY_LEVEL_PATTERNS):
-        return not matches_any(title, EXCLUDE_ENTRY_LEVEL_PATTERNS)
+    if matches_any(text, ENTRY_LEVEL_PATTERNS):
+        return 2
 
-    if matches_any(text, [r"junior", r"entry[- ]?level", r"early\s+career"]):
-        return True
+    # AI/Data roles without an explicit seniority level are kept for review.
+    return 3
 
-    if matches_any(title, [r"research\s+(assistant|student)"]):
-        return matches_any(text, AI_DESCRIPTION_PATTERNS)
 
-    return False
+def is_internship(job):
+    return get_target_tier(job) in (1, 2, 3)
 
 
 def is_location_eligible(job):
@@ -467,7 +469,9 @@ def main():
 
     stats = {
         "unique": len(unique),
-        "target_level": 0,
+        "tier1": 0,
+        "tier2": 0,
+        "tier3": 0,
         "ai_data": 0,
         "location": 0,
         "excluded_seniority": 0,
@@ -479,13 +483,18 @@ def main():
 
     for job in unique.values():
         title = job["title"].lower()
-        internship = is_internship(job)
+        tier = get_target_tier(job)
+        internship = tier > 0
         ai_data = is_ai_role(job)
         location = is_location_eligible(job)
         excluded = any(x in title for x in EXCLUDE_KEYWORDS)
 
-        if internship:
-            stats["target_level"] += 1
+        if tier == 1:
+            stats["tier1"] += 1
+        elif tier == 2:
+            stats["tier2"] += 1
+        elif tier == 3:
+            stats["tier3"] += 1
         if ai_data:
             stats["ai_data"] += 1
         if location:
@@ -505,8 +514,8 @@ def main():
             reasons = []
             if excluded:
                 reasons.append("seniority excluded")
-            elif not internship:
-                reasons.append("not internship/junior")
+            elif tier == 0:
+                reasons.append("seniority excluded")
             if not ai_data:
                 reasons.append("not AI/Data")
             if not location:
@@ -521,7 +530,9 @@ def main():
     for name, count in source_counts.items():
         print(f"  {name}: {count}")
     print(f"  Unique URLs: {stats['unique']}")
-    print(f"  Target level (Intern/Junior/Entry): {stats['target_level']}")
+    print(f"  Tier 1 - Internship: {stats['tier1']}")
+    print(f"  Tier 2 - Junior/Graduate: {stats['tier2']}")
+    print(f"  Tier 3 - Seniority not specified: {stats['tier3']}")
     print(f"  AI/Data: {stats['ai_data']}")
     print(f"  Location eligible: {stats['location']}")
     print(f"  Seniority excluded: {stats['excluded_seniority']}")
@@ -552,7 +563,9 @@ def main():
             "<b>Diagnostics</b>",
             f"Sources: {sum(source_counts.values())}",
             f"Unique: {stats['unique']}",
-            f"Target level: {stats['target_level']}",
+            f"Tier 1 - Internship: {stats['tier1']}",
+            f"Tier 2 - Junior/Graduate: {stats['tier2']}",
+            f"Tier 3 - Seniority not specified: {stats['tier3']}",
             f"AI/Data: {stats['ai_data']}",
             f"Location eligible: {stats['location']}",
             f"Seniority excluded: {stats['excluded_seniority']}",
@@ -587,7 +600,9 @@ def main():
             "<b>Diagnostics</b>",
             f"Sources: {sum(source_counts.values())}",
             f"Unique: {stats['unique']}",
-            f"Target level: {stats['target_level']}",
+            f"Tier 1 - Internship: {stats['tier1']}",
+            f"Tier 2 - Junior/Graduate: {stats['tier2']}",
+            f"Tier 3 - Seniority not specified: {stats['tier3']}",
             f"AI/Data: {stats['ai_data']}",
             f"Location eligible: {stats['location']}",
             f"New eligible: {stats['eligible']}",
